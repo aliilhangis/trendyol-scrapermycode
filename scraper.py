@@ -1,17 +1,16 @@
 import asyncio
 import json
 from playwright.async_api import async_playwright
-import re
 
 async def scrape_product(url):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)  # Debug için headless=False
+        browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
 
         await page.goto(url, wait_until="networkidle")
-        await page.wait_for_timeout(3000)  # Sayfanın tam yüklenmesi için bekle
+        await page.wait_for_timeout(3000)
 
-        # Çerez/KVKK popup'ı varsa otomatik kapat (farklı selector'lar ile)
+        # Çerez/KVKK popup'ı varsa otomatik kapat
         cookie_selectors = [
             'button:has-text("Kabul Et")',
             'button#onetrust-accept-btn-handler',
@@ -28,7 +27,6 @@ async def scrape_product(url):
             except:
                 continue
 
-        # Ekstra bekleme ve scroll (açıklama, yorum, Q&A için)
         await page.wait_for_timeout(2000)
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight/3)")
         await page.wait_for_timeout(1000)
@@ -37,15 +35,35 @@ async def scrape_product(url):
         title = await page.locator('h1').first.inner_text()
 
         # --- ÜRÜN FİYATI ---
-        price_locator = page.locator('span.price-view-original')
-        price = await price_locator.inner_text() if await price_locator.count() > 0 else None
+        price = None
+        price_selectors = [
+            'span.prc-dsc',
+            'span.prc-org',
+            'p.prc-dsc',
+            'span.price-view-original'
+        ]
+        for sel in price_selectors:
+            price_locator = page.locator(sel)
+            if await price_locator.count() > 0:
+                price = await price_locator.first.inner_text()
+                break
 
-        # --- ÜRÜN AÇIKLAMASI (basitleştirilmiş) ---
+        # --- ÜRÜN AÇIKLAMASI ---
         description = ""
         try:
-            desc_element = page.locator('div#product-description, div.product-description, div#productDetail')
-            if await desc_element.count() > 0:
-                description = await desc_element.first.inner_text()
+            desc_selectors = [
+                'div.detail-attr-container',
+                'div.product-feature-container',
+                'div.detail-desc-list',
+                'div#product-description',
+                'div.product-description',
+                'div#productDetail'
+            ]
+            for sel in desc_selectors:
+                desc_element = page.locator(sel)
+                if await desc_element.count() > 0:
+                    description = await desc_element.first.inner_text()
+                    break
         except Exception as e:
             print(f"Açıklama alınırken hata: {e}")
 
@@ -62,7 +80,6 @@ async def scrape_product(url):
         comments = []
         try:
             print("Yorumlar aranıyor...")
-            show_comments_btn = None
             btn_selectors = [
                 'a[data-testid="show-more-button"] span:has-text("TÜM YORUMLARI GÖSTER")',
                 'a[data-testid="show-more-button"]',
@@ -72,7 +89,6 @@ async def scrape_product(url):
             for selector in btn_selectors:
                 btn = page.locator(selector)
                 if await btn.count() > 0:
-                    show_comments_btn = btn
                     print(f"Yorum butonu bulundu: {selector}")
                     await btn.first.click()
                     await page.wait_for_load_state('networkidle')
@@ -81,11 +97,10 @@ async def scrape_product(url):
 
             last_count = 0
             same_count_times = 0
-            max_no_increase = 15
-            max_total = 1000
-            for _ in range(max_total):
-                comment_items = None
-                comment_count = 0
+            max_no_increase = 10
+            comment_items = None
+
+            for _ in range(500):
                 comment_selectors = [
                     'div.reviews-wrapper div.comment',
                     'div.comment',
@@ -99,17 +114,20 @@ async def scrape_product(url):
                         comment_items = items
                         comment_count = count
                         break
+                else:
+                    comment_count = 0
+
                 print(f"Yorum sayısı: {comment_count}")
                 if comment_count == last_count:
                     same_count_times += 1
                 else:
                     same_count_times = 0
                 if same_count_times >= max_no_increase:
-                    print("Yorum sayısı artmıyor, scroll işlemi durduruluyor.")
+                    print("Yorum sayısı artmıyor, durduruluyor.")
                     break
                 last_count = comment_count
                 await page.evaluate("window.scrollBy(0, window.innerHeight * 0.75)")
-                await page.wait_for_timeout(1000)
+                await page.wait_for_timeout(800)
 
             if comment_items:
                 for i in range(min(await comment_items.count(), 200)):
@@ -117,27 +135,19 @@ async def scrape_product(url):
                         user = ""
                         text = ""
                         stars = 0
-                        user_selectors = [
-                            'div.comment-info-item',
-                            'span.user-name',
-                            'div.user-info span'
-                        ]
-                        for user_sel in user_selectors:
+
+                        for user_sel in ['div.comment-info-item', 'span.user-name', 'div.user-info span']:
                             user_elem = comment_items.nth(i).locator(user_sel)
                             if await user_elem.count() > 0:
                                 user = await user_elem.first.inner_text()
                                 break
-                        text_selectors = [
-                            'div.comment-text p',
-                            'div.comment-text',
-                            'p',
-                            'div.text'
-                        ]
-                        for text_sel in text_selectors:
+
+                        for text_sel in ['div.comment-text p', 'div.comment-text', 'p', 'div.text']:
                             text_elem = comment_items.nth(i).locator(text_sel)
                             if await text_elem.count() > 0:
                                 text = await text_elem.first.inner_text()
                                 break
+
                         ratings_block = comment_items.nth(i).locator('div.ratings.readonly')
                         if await ratings_block.count() > 0:
                             star_ws = ratings_block.first.locator('div.star-w')
@@ -150,6 +160,7 @@ async def scrape_product(url):
                                             stars += float(width.replace('%', '')) / 100
                                         except:
                                             continue
+
                         if text.strip():
                             comments.append({
                                 'user': user.strip() if user else "Anonim",
@@ -168,6 +179,7 @@ async def scrape_product(url):
             await page.goto(url, wait_until="networkidle")
             await page.wait_for_timeout(2000)
             print("Q&A aranıyor...")
+
             qna_btn = None
             qna_btn_selectors = [
                 'a[data-testid="show-more-button"] span:has-text("Tüm Soruları Göster")',
@@ -185,19 +197,21 @@ async def scrape_product(url):
                 if qna_btn:
                     break
                 await page.evaluate("window.scrollBy(0, window.innerHeight * 0.75)")
-                await page.wait_for_timeout(1000)
+                await page.wait_for_timeout(800)
+
             if qna_btn:
                 await qna_btn.first.click()
                 await page.wait_for_load_state('networkidle')
                 await page.wait_for_timeout(2000)
             else:
                 print("Q&A butonu bulunamadı!")
+
             last_count = 0
             same_count_times = 0
-            max_no_increase = 15
-            max_total = 1000
+            max_no_increase = 10
             qna_items = None
-            for _ in range(max_total):
+
+            for _ in range(500):
                 qna_items = page.locator('div.qna-item')
                 qna_count = await qna_items.count()
                 print(f"Q&A sayısı: {qna_count}")
@@ -206,11 +220,12 @@ async def scrape_product(url):
                 else:
                     same_count_times = 0
                 if same_count_times >= max_no_increase:
-                    print("Q&A sayısı artmıyor, scroll işlemi durduruluyor.")
+                    print("Q&A sayısı artmıyor, durduruluyor.")
                     break
                 last_count = qna_count
                 await page.evaluate("window.scrollBy(0, window.innerHeight * 0.75)")
-                await page.wait_for_timeout(1000)
+                await page.wait_for_timeout(800)
+
             if qna_items:
                 for i in range(await qna_items.count()):
                     try:
@@ -235,7 +250,7 @@ async def scrape_product(url):
 
         await browser.close()
 
-        product_data = {
+        return {
             'title': title.strip(),
             'price': price.strip() if price else None,
             'description': description.strip(),
@@ -243,23 +258,3 @@ async def scrape_product(url):
             'comments': comments,
             'qna': qna_list
         }
-
-        return product_data
-
-
-def main():
-    url = input("Lütfen Trendyol ürün URL'sini girin: ").strip()
-    print(f"Scraping: {url}")
-    data = asyncio.run(scrape_product(url))
-    with open('urun_detay.json', 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print("Veriler 'urun_detay.json' dosyasına kaydedildi.")
-    print(f"Başlık: {data['title']}")
-    print(f"Fiyat: {data['price']}")
-    print(f"Açıklama uzunluğu: {len(data['description'])} karakter")
-    print(f"Görsel sayısı: {len(data['images'])}")
-    print(f"Yorum sayısı: {len(data['comments'])}")
-    print(f"Q&A sayısı: {len(data['qna'])}")
-
-if __name__ == '__main__':
-    main()
