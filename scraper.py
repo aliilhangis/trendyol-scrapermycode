@@ -66,12 +66,12 @@ async def scrape_product(url):
         # --- FİYAT ---
         price = None
         price_selectors = [
+            'span.price.normal-price',
+            'span.price-current-price.price-lg',
+            'div.price-wrapper span.price',
             'span.prc-dsc',
             'span.prc-org',
-            'p.prc-dsc',
             'span.price-view-original',
-            'div.pr-bx-pr-dsc span',
-            'span.prc-slg',
         ]
         for sel in price_selectors:
             price_locator = page.locator(sel)
