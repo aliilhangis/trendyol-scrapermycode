@@ -1,8 +1,17 @@
 import asyncio
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # ← 1) bu import'u ekle
 from scraper import scrape_product
 
 app = FastAPI()
+
+# ← 2) app = FastAPI() ile route arasına bunu ekle
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 @app.get("/scrape")
 async def scrape(url: str):
