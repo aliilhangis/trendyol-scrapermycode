@@ -2,7 +2,6 @@ import asyncio
 from playwright.async_api import async_playwright
 
 async def scrape_product(url):
-    # URL'den base path'i çıkar (query string olmadan)
     base_url = url.split('?')[0].rstrip('/')
     reviews_url = base_url + '/yorumlar'
     qna_url = base_url + '/saticiya-sor'
@@ -39,11 +38,9 @@ async def scrape_product(url):
 
         page = await context.new_page()
 
-        # =====================
         # ANA SAYFA
-        # =====================
-        await page.goto(url, wait_until="networkidle", timeout=60000)
-        await page.wait_for_timeout(3000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        await page.wait_for_timeout(4000)
 
         # Çerez popup'ı kapat
         for sel in ['button:has-text("Kabul Et")', 'button#onetrust-accept-btn-handler', 'button:has-text("Accept All")']:
@@ -58,8 +55,15 @@ async def scrape_product(url):
         await page.wait_for_timeout(2000)
 
         # BAŞLIK
-        title = await page.locator('h1').first.inner_text()
-        print(f"Başlık: {title}")
+        title = ""
+        try:
+            await page.wait_for_selector('h1', timeout=15000)
+            title = await page.locator('h1').first.inner_text()
+            print(f"Başlık: {title}")
+        except Exception as e:
+            print(f"H1 bulunamadı, page title deneniyor: {e}")
+            title = await page.title()
+            print(f"Page title: {title}")
 
         # FİYAT
         price = None
@@ -87,27 +91,28 @@ async def scrape_product(url):
 
         # GÖRSELLER
         image_urls = []
-        thumbs = page.locator('div._carouselThumbsContainer_05669af img._carouselThumbsImage_ddecc3e')
-        for i in range(await thumbs.count()):
-            src = await thumbs.nth(i).get_attribute('src')
-            if src and src not in image_urls:
-                image_urls.append(src)
-        print(f"Görsel: {len(image_urls)}")
+        try:
+            thumbs = page.locator('div._carouselThumbsContainer_05669af img._carouselThumbsImage_ddecc3e')
+            for i in range(await thumbs.count()):
+                src = await thumbs.nth(i).get_attribute('src')
+                if src and src not in image_urls:
+                    image_urls.append(src)
+            print(f"Görsel: {len(image_urls)}")
+        except Exception as e:
+            print(f"Görsel hatası: {e}")
 
-        # =====================
         # YORUMLAR SAYFASI
-        # =====================
         comments = []
         try:
-            print(f"Yorumlar sayfası: {reviews_url}")
-            await page.goto(reviews_url, wait_until="networkidle", timeout=60000)
+            print(f"Yorumlar: {reviews_url}")
+            await page.goto(reviews_url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(3000)
 
             last_count = 0
             same_count_times = 0
             for _ in range(300):
                 count = await page.locator('div.review').count()
-                print(f"Yorum sayısı: {count}")
+                print(f"Yorum: {count}")
                 if count == last_count:
                     same_count_times += 1
                 else:
@@ -127,17 +132,14 @@ async def scrape_product(url):
                     item = items.nth(i)
                     user, text, stars = "", "", 0
 
-                    # Kullanıcı adı
                     u = item.locator('span.detail-item.name')
                     if await u.count() > 0:
                         user = await u.first.inner_text()
 
-                    # Yorum metni
                     t = item.locator('div.review-comment')
                     if await t.count() > 0:
                         text = await t.first.inner_text()
 
-                    # Yıldız — dolu yıldız sayısını say
                     full_stars = item.locator('svg.star-rating-full-star, i.star-rating-full-star, span.star-rating-full-star')
                     stars = await full_stars.count()
 
@@ -155,20 +157,18 @@ async def scrape_product(url):
 
         print(f"İşlenen yorum: {len(comments)}")
 
-        # =====================
-        # SORU-CEVAP SAYFASI
-        # =====================
+        # Q&A SAYFASI
         qna_list = []
         try:
-            print(f"Q&A sayfası: {qna_url}")
-            await page.goto(qna_url, wait_until="networkidle", timeout=60000)
+            print(f"Q&A: {qna_url}")
+            await page.goto(qna_url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(3000)
 
             last_count = 0
             same_count_times = 0
             for _ in range(300):
                 count = await page.locator('div.question-answer-card').count()
-                print(f"Q&A sayısı: {count}")
+                print(f"Q&A: {count}")
                 if count == last_count:
                     same_count_times += 1
                 else:
