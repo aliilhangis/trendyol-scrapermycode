@@ -1,123 +1,137 @@
-import os
+import re
 import requests
-from bs4 import BeautifulSoup
 
-SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "")
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "tr-TR,tr;q=0.9",
+    "Origin": "https://www.trendyol.com",
+    "Referer": "https://www.trendyol.com/",
+    "storefront-id": "1",
+    "culture": "tr-TR",
+    "channel-id": "1",
+    "platform": "WEB",
+}
 
-def fetch(url: str) -> BeautifulSoup:
-    api_url = "https://api.scraperapi.com/"
-    params = {
-        "api_key": SCRAPERAPI_KEY,
-        "url": url,
-        "render": "true",
-        "country_code": "tr",
-        "wait_for_selector": "h1",
-    }
-    print(f"Fetching: {url}")
-    response = requests.get(api_url, params=params, timeout=90)
-    print(f"Status: {response.status_code} | Size: {len(response.text)} chars")
-    return BeautifulSoup(response.text, "html.parser")
+BASE_API = "https://apigw.trendyol.com/discovery-storefront-trproductgw-service/api"
+REVIEW_API = "https://apigw.trendyol.com/discovery-storefront-trproductgw-service/api/product-reviews"
+QNA_API = "https://apigw.trendyol.com/discovery-storefront-trproductgw-service/api/qna"
+
+def extract_product_id(url: str) -> str:
+    match = re.search(r'-p-(\d+)', url)
+    if not match:
+        raise ValueError(f"Ürün ID bulunamadı: {url}")
+    return match.group(1)
 
 async def scrape_product(url: str):
-    base_url = url.split('?')[0].rstrip('/')
-    reviews_url = base_url + '/yorumlar'
-    qna_url = base_url + '/saticiya-sor'
+    product_id = extract_product_id(url)
+    print(f"Ürün ID: {product_id}")
 
-    # ANA SAYFA
-    soup = fetch(url)
+    # ANA ÜRÜN BİLGİSİ
+    product_url = f"{BASE_API}/productDetail?contentId={product_id}"
+    print(f"API isteği: {product_url}")
+    resp = requests.get(product_url, headers=HEADERS, timeout=30)
+    print(f"Ürün API status: {resp.status_code}")
 
-    # BAŞLIK
     title = ""
-    h1 = soup.find('h1')
-    if h1:
-        title = h1.get_text(strip=True)
-        print(f"Başlık: {title}")
-    else:
-        title_tag = soup.find('title')
-        title = title_tag.get_text(strip=True) if title_tag else ""
-        print(f"H1 yok, title: {title}")
-
-    # FİYAT
     price = None
-    price_el = soup.find('span', class_='discounted')
-    if price_el:
-        price = price_el.get_text(strip=True)
-        print(f"Fiyat: {price}")
-    else:
-        print("Fiyat bulunamadı!")
-
-    # AÇIKLAMA
     description = ""
-    for sel in ['detail-attr-container', 'product-description']:
-        el = soup.find('div', id=sel) or soup.find('div', class_=sel)
-        if el:
-            description = el.get_text(separator='\n', strip=True)
-            print(f"Açıklama bulundu: {sel}")
-            break
-
-    # GÖRSELLER
     image_urls = []
-    for img in soup.select('img[src*="cdn.dsmcdn.com"]'):
-        src = img.get('src', '')
-        if src and src not in image_urls:
-            image_urls.append(src)
-    print(f"Görsel: {len(image_urls)}")
 
-    # YORUMLAR SAYFASI
+    if resp.status_code == 200:
+        data = resp.json()
+        print(f"API response keys: {list(data.keys())}")
+
+        # Başlık
+        title = data.get("name", "") or data.get("title", "") or data.get("displayName", "")
+
+        # Fiyat
+        price_data = data.get("priceWithDiscountedTax") or data.get("price") or data.get("salePrice")
+        if price_data:
+            price = f"{price_data} TL"
+
+        # Açıklama
+        description = data.get("description", "") or data.get("productDetailAttributes", "")
+
+        # Görseller
+        images = data.get("images", [])
+        for img in images:
+            if isinstance(img, str):
+                image_urls.append(img)
+            elif isinstance(img, dict):
+                src = img.get("url") or img.get("imageUrl") or img.get("src")
+                if src:
+                    image_urls.append(src)
+
+        print(f"Başlık: {title}")
+        print(f"Fiyat: {price}")
+        print(f"Görsel: {len(image_urls)}")
+    else:
+        print(f"API yanıtı: {resp.text[:500]}")
+
+    # YORUMLAR
     comments = []
     try:
-        review_soup = fetch(reviews_url)
-        review_cards = review_soup.find_all('div', class_='review')
-        print(f"Yorum kartı: {len(review_cards)}")
-
-        for card in review_cards:
-            try:
-                user_el = card.find('span', class_=lambda c: c and 'name' in c)
-                text_el = card.find('div', class_='review-comment')
-                full_stars = card.find_all(class_=lambda c: c and 'full-star' in c) if card else []
-
-                user = user_el.get_text(strip=True) if user_el else "Anonim"
-                text = text_el.get_text(strip=True) if text_el else ""
-                stars = len(full_stars)
-
+        page = 0
+        while len(comments) < 200:
+            review_url = f"{REVIEW_API}?productId={product_id}&page={page}&size=20"
+            r = requests.get(review_url, headers=HEADERS, timeout=30)
+            print(f"Yorum API status ({page}): {r.status_code}")
+            if r.status_code != 200:
+                break
+            review_data = r.json()
+            items = review_data.get("reviews", review_data.get("content", review_data.get("items", [])))
+            if not items:
+                break
+            for item in items:
+                text = item.get("text", "") or item.get("comment", "") or item.get("content", "")
+                user = item.get("userFullName", "") or item.get("userName", "") or item.get("user", {}).get("name", "Anonim")
+                stars = item.get("rate", 0) or item.get("rating", 0) or item.get("star", 0)
                 if text:
-                    comments.append({'user': user, 'text': text, 'stars': stars})
-            except Exception as e:
-                print(f"Yorum parse hatası: {e}")
+                    comments.append({"user": str(user), "text": str(text), "stars": float(stars)})
+            total_pages = review_data.get("totalPages", review_data.get("pageCount", 1))
+            page += 1
+            if page >= total_pages:
+                break
+        print(f"Toplam yorum: {len(comments)}")
     except Exception as e:
         print(f"Yorum hatası: {e}")
 
-    print(f"İşlenen yorum: {len(comments)}")
-
-    # Q&A SAYFASI
+    # Q&A
     qna_list = []
     try:
-        qna_soup = fetch(qna_url)
-        qna_cards = qna_soup.find_all('div', class_='question-answer-card')
-        print(f"Q&A kartı: {len(qna_cards)}")
-
-        for card in qna_cards:
-            try:
-                q_el = card.find('div', class_='question-answer-card-question-text')
-                a_el = card.find('div', class_='seller-answer-content-text')
-
-                question = q_el.get_text(strip=True) if q_el else ""
-                answer = a_el.get_text(strip=True) if a_el else ""
-
+        page = 0
+        while len(qna_list) < 200:
+            qna_url = f"{QNA_API}?productId={product_id}&page={page}&size=20"
+            r = requests.get(qna_url, headers=HEADERS, timeout=30)
+            print(f"Q&A API status ({page}): {r.status_code}")
+            if r.status_code != 200:
+                break
+            qna_data = r.json()
+            items = qna_data.get("questions", qna_data.get("content", qna_data.get("items", [])))
+            if not items:
+                break
+            for item in items:
+                question = item.get("text", "") or item.get("question", "") or item.get("questionText", "")
+                answer = ""
+                answers = item.get("answers", [])
+                if answers and isinstance(answers, list):
+                    answer = answers[0].get("text", "") or answers[0].get("answer", "") or answers[0].get("answerText", "")
                 if question or answer:
-                    qna_list.append({'question': question, 'answer': answer})
-            except Exception as e:
-                print(f"Q&A parse hatası: {e}")
+                    qna_list.append({"question": str(question), "answer": str(answer)})
+            total_pages = qna_data.get("totalPages", qna_data.get("pageCount", 1))
+            page += 1
+            if page >= total_pages:
+                break
+        print(f"Toplam Q&A: {len(qna_list)}")
     except Exception as e:
         print(f"Q&A hatası: {e}")
 
-    print(f"İşlenen Q&A: {len(qna_list)}")
-
     return {
-        'title': title,
-        'price': price,
-        'description': description,
-        'images': image_urls,
-        'comments': comments,
-        'qna': qna_list
+        "title": title,
+        "price": price,
+        "description": description,
+        "images": image_urls,
+        "comments": comments,
+        "qna": qna_list,
     }
