@@ -47,6 +47,11 @@ async def scrape_product(url):
 
         page = await context.new_page()
 
+        # IP TEST
+        await page.goto("https://api.ipify.org?format=json", wait_until="domcontentloaded", timeout=30000)
+        ip_text = await page.locator('body').inner_text()
+        print(f"Proxy IP: {ip_text}")
+
         # ANA SAYFA
         await page.goto(url, wait_until="domcontentloaded", timeout=90000)
         await page.wait_for_timeout(4000)
