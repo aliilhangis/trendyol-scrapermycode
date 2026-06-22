@@ -1,8 +1,6 @@
 import asyncio
-import os
 from playwright.async_api import async_playwright
 
-SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "")
 
 async def scrape_product(url):
     base_url = url.split('?')[0].rstrip('/')
@@ -12,11 +10,6 @@ async def scrape_product(url):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            proxy={
-                "server": "http://proxy-server.scraperapi.com:8001",
-                "username": "scraperapi",
-                "password": SCRAPERAPI_KEY,
-            },
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -46,11 +39,6 @@ async def scrape_product(url):
         """)
 
         page = await context.new_page()
-
-        # IP TEST
-        await page.goto("https://api.ipify.org?format=json", wait_until="domcontentloaded", timeout=30000)
-        ip_text = await page.locator('body').inner_text()
-        print(f"Proxy IP: {ip_text}")
 
         # ANA SAYFA
         await page.goto(url, wait_until="domcontentloaded", timeout=90000)
