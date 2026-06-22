@@ -1,5 +1,11 @@
 import asyncio
+import os
 from playwright.async_api import async_playwright
+
+SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "")
+
+def scraperapi_url(target_url: str) -> str:
+    return f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={target_url}&render=true&country_code=tr"
 
 async def scrape_product(url):
     base_url = url.split('?')[0].rstrip('/')
@@ -13,7 +19,6 @@ async def scrape_product(url):
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-blink-features=AutomationControlled',
-                '--disable-infobars',
                 '--window-size=1920,1080',
             ]
         )
@@ -23,45 +28,24 @@ async def scrape_product(url):
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             locale='tr-TR',
             timezone_id='Europe/Istanbul',
-            extra_http_headers={
-                'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            }
         )
-
-        await context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['tr-TR', 'tr'] });
-            window.chrome = { runtime: {} };
-        """)
 
         page = await context.new_page()
 
-        # ANA SAYFA
-        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        # ANA SAYFA — ScraperAPI üzerinden
+        target = scraperapi_url(url)
+        print(f"Ana sayfa yükleniyor...")
+        await page.goto(target, wait_until="domcontentloaded", timeout=90000)
         await page.wait_for_timeout(4000)
-
-        # Çerez popup'ı kapat
-        for sel in ['button:has-text("Kabul Et")', 'button#onetrust-accept-btn-handler', 'button:has-text("Accept All")']:
-            try:
-                await page.wait_for_selector(sel, timeout=2000)
-                await page.click(sel)
-                print(f"Çerez kapatıldı: {sel}")
-                break
-            except:
-                continue
-
-        await page.wait_for_timeout(2000)
 
         # BAŞLIK
         title = ""
         try:
-            await page.wait_for_selector('h1', timeout=15000)
+            await page.wait_for_selector('h1', timeout=20000)
             title = await page.locator('h1').first.inner_text()
             print(f"Başlık: {title}")
         except Exception as e:
-            print(f"H1 bulunamadı, page title deneniyor: {e}")
+            print(f"H1 bulunamadı: {e}")
             title = await page.title()
             print(f"Page title: {title}")
 
@@ -104,13 +88,13 @@ async def scrape_product(url):
         # YORUMLAR SAYFASI
         comments = []
         try:
-            print(f"Yorumlar: {reviews_url}")
-            await page.goto(reviews_url, wait_until="domcontentloaded", timeout=60000)
+            print(f"Yorumlar yükleniyor...")
+            await page.goto(scraperapi_url(reviews_url), wait_until="domcontentloaded", timeout=90000)
             await page.wait_for_timeout(3000)
 
             last_count = 0
             same_count_times = 0
-            for _ in range(300):
+            for _ in range(200):
                 count = await page.locator('div.review').count()
                 print(f"Yorum: {count}")
                 if count == last_count:
@@ -121,7 +105,7 @@ async def scrape_product(url):
                     break
                 last_count = count
                 await page.evaluate("window.scrollBy(0, window.innerHeight)")
-                await page.wait_for_timeout(700)
+                await page.wait_for_timeout(800)
 
             items = page.locator('div.review')
             total = await items.count()
@@ -160,13 +144,13 @@ async def scrape_product(url):
         # Q&A SAYFASI
         qna_list = []
         try:
-            print(f"Q&A: {qna_url}")
-            await page.goto(qna_url, wait_until="domcontentloaded", timeout=60000)
+            print(f"Q&A yükleniyor...")
+            await page.goto(scraperapi_url(qna_url), wait_until="domcontentloaded", timeout=90000)
             await page.wait_for_timeout(3000)
 
             last_count = 0
             same_count_times = 0
-            for _ in range(300):
+            for _ in range(200):
                 count = await page.locator('div.question-answer-card').count()
                 print(f"Q&A: {count}")
                 if count == last_count:
@@ -177,7 +161,7 @@ async def scrape_product(url):
                     break
                 last_count = count
                 await page.evaluate("window.scrollBy(0, window.innerHeight)")
-                await page.wait_for_timeout(700)
+                await page.wait_for_timeout(800)
 
             items = page.locator('div.question-answer-card')
             total = await items.count()
