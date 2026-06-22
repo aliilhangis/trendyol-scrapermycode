@@ -12,13 +12,17 @@ async def scrape_product(url):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
+            proxy={
+                "server": "http://proxy-server.scraperapi.com:8001",
+                "username": "scraperapi",
+                "password": SCRAPERAPI_KEY,
+            },
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-blink-features=AutomationControlled',
                 '--disable-infobars',
                 '--window-size=1920,1080',
-                f'--proxy-server=http://scraperapi:{SCRAPERAPI_KEY}@proxy-server.scraperapi.com:8001',
             ]
         )
 
