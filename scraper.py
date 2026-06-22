@@ -1,5 +1,23 @@
 import asyncio
+import os
+import random
 from playwright.async_api import async_playwright
+
+WEBSHARE_USER = os.environ.get('WEBSHARE_USER', 'ybhzseuq')
+WEBSHARE_PASS = os.environ.get('WEBSHARE_PASS', '0t0bii3mrxyw')
+
+PROXIES = [
+    '31.59.20.176:6754',
+    '31.56.127.193:7684',
+    '45.38.107.97:6014',
+    '38.154.203.95:5863',
+    '198.105.121.200:6462',
+    '64.137.96.74:6641',
+    '198.23.243.226:6361',
+    '38.154.185.97:6370',
+    '142.111.67.146:5611',
+    '191.96.254.138:6185',
+]
 
 
 async def scrape_product(url):
@@ -8,8 +26,14 @@ async def scrape_product(url):
     qna_url = base_url + '/saticiya-sor'
 
     async with async_playwright() as p:
+        proxy_host = random.choice(PROXIES)
         browser = await p.chromium.launch(
             headless=True,
+            proxy={
+                'server': f'http://{proxy_host}',
+                'username': WEBSHARE_USER,
+                'password': WEBSHARE_PASS,
+            },
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
