@@ -76,17 +76,17 @@ async def scrape_product(url: str):
             if r.status_code != 200:
                 break
             data = r.json()
-            print(f"Yorum keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-            items = data.get("productReviews", data.get("reviews", data.get("content", [])))
+            result = data.get("result", {})
+            items = result.get("reviews", [])
             if not items:
                 break
             for item in items:
-                text = item.get("comment", "") or item.get("text", "")
-                user = item.get("userFullName", "") or item.get("userName", "Anonim")
-                stars = item.get("rate", 0) or item.get("rating", 0)
+                text = item.get("comment", "")
+                user = item.get("userFullName", "Anonim")
+                stars = item.get("rate", 0)
                 if text:
                     comments.append({"user": str(user), "text": str(text), "stars": float(stars)})
-            total_pages = data.get("totalPages", data.get("pageCount", 1))
+            total_pages = result.get("summary", {}).get("totalPages", 1)
             page += 1
             if page >= total_pages:
                 break
@@ -108,17 +108,20 @@ async def scrape_product(url: str):
             if r.status_code != 200:
                 break
             data = r.json()
-            print(f"Q&A type: {type(data)} | ilk 200: {str(data)[:200]}")
-            items = data.get("questions", data.get("content", data.get("items", []))) if isinstance(data, dict) else []
+            questions_block = data.get("questions", {})
+            items = questions_block.get("content", [])
             if not items:
                 break
             for item in items:
-                question = item.get("text", "") or item.get("question", "")
+                question = item.get("text", "")
                 answers = item.get("answers", [])
-                answer = answers[0].get("text", "") if answers else ""
+                if isinstance(answers, list) and answers:
+                    answer = answers[0].get("text", "") if isinstance(answers[0], dict) else str(answers[0])
+                else:
+                    answer = str(answers) if answers else ""
                 if question or answer:
                     qna_list.append({"question": str(question), "answer": str(answer)})
-            total_pages = data.get("totalPages", data.get("pageCount", 1))
+            total_pages = questions_block.get("totalPages", 1)
             page += 1
             if page >= total_pages:
                 break
