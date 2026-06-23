@@ -76,6 +76,7 @@ async def scrape_product(url: str):
             if r.status_code != 200:
                 break
             data = r.json()
+            print(f"Yorum keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
             items = data.get("productReviews", data.get("reviews", data.get("content", [])))
             if not items:
                 break
@@ -107,7 +108,8 @@ async def scrape_product(url: str):
             if r.status_code != 200:
                 break
             data = r.json()
-            items = data.get("questions", data.get("content", data.get("items", [])))
+            print(f"Q&A type: {type(data)} | ilk 200: {str(data)[:200]}")
+            items = data.get("questions", data.get("content", data.get("items", []))) if isinstance(data, dict) else []
             if not items:
                 break
             for item in items:
