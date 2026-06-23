@@ -1,229 +1,134 @@
-import asyncio
-import os
-import random
-from playwright.async_api import async_playwright
+import re
+import requests
 
-WEBSHARE_USER = os.environ.get('WEBSHARE_USER', 'ybhzseuq')
-WEBSHARE_PASS = os.environ.get('WEBSHARE_PASS', '0t0bii3mrxyw')
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "tr-TR,tr;q=0.9",
+    "Origin": "https://www.trendyol.com",
+    "Referer": "https://www.trendyol.com/",
+    "channelId": "1",
+    "storefrontId": "1",
+    "culture": "tr-TR",
+    "platform": "WEB",
+}
 
-PROXIES = [
-    '31.59.20.176:6754',
-    '31.56.127.193:7684',
-    '45.38.107.97:6014',
-    '38.154.203.95:5863',
-    '198.105.121.200:6462',
-    '64.137.96.74:6641',
-    '198.23.243.226:6361',
-    '38.154.185.97:6370',
-    '142.111.67.146:5611',
-    '191.96.254.138:6185',
-]
+BASE = "https://apigw.trendyol.com/discovery-storefront-trproductgw-service/api"
 
+def extract_ids(url: str):
+    product_id = re.search(r'-p-(\d+)', url)
+    seller_id = re.search(r'merchantId=(\d+)', url)
+    if not product_id:
+        raise ValueError(f"Ürün ID bulunamadı: {url}")
+    return product_id.group(1), (seller_id.group(1) if seller_id else None)
 
-async def scrape_product(url):
-    base_url = url.split('?')[0].rstrip('/')
-    reviews_url = base_url + '/yorumlar'
-    qna_url = base_url + '/saticiya-sor'
+async def scrape_product(url: str):
+    product_id, seller_id = extract_ids(url)
+    print(f"Ürün ID: {product_id} | Satıcı ID: {seller_id}")
 
-    async with async_playwright() as p:
-        proxy_host = random.choice(PROXIES)
-        browser = await p.chromium.launch(
-            headless=True,
-            proxy={
-                'server': f'http://{proxy_host}',
-                'username': WEBSHARE_USER,
-                'password': WEBSHARE_PASS,
-            },
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-infobars',
-                '--window-size=1920,1080',
-            ]
+    # ANA ÜRÜN — breadcrumb-seo'dan başlık al
+    title = ""
+    price = None
+    description = ""
+    image_urls = []
+
+    try:
+        breadcrumb_url = (
+            f"https://apigw.trendyol.com/discovery-storefrontmarketing-marketinggw-service"
+            f"/breadcrumb-seo/furia/ft-30901bk-sss-manyetikli-elektro-gitar-p-{product_id}"
+            f"?__renderMode=stream&platform=WEB&enableRedirect=true&pageType=product"
+            f"&channelId=1&storefrontId=1&language=tr&countryCode=TR&tld=.com&subPathStrategy=no-subpath"
         )
-
-        context = await browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            locale='tr-TR',
-            timezone_id='Europe/Istanbul',
-            ignore_https_errors=True,
-            extra_http_headers={
-                'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            }
+        # Slug'ı URL'den çıkar
+        slug_match = re.search(r'trendyol\.com/([^?]+)', url)
+        slug = slug_match.group(1) if slug_match else f"furia/ft-30901bk-sss-manyetikli-elektro-gitar-p-{product_id}"
+        
+        breadcrumb_url = (
+            f"https://apigw.trendyol.com/discovery-storefrontmarketing-marketinggw-service"
+            f"/breadcrumb-seo/{slug}"
+            f"?__renderMode=stream&platform=WEB&enableRedirect=true&pageType=product"
+            f"&channelId=1&storefrontId=1&language=tr&countryCode=TR&tld=.com&subPathStrategy=no-subpath"
         )
+        r = requests.get(breadcrumb_url, headers=HEADERS, timeout=30)
+        print(f"Breadcrumb status: {r.status_code}")
+        if r.status_code == 200:
+            data = r.json()
+            html = data.get("main", "")
+            # Son breadcrumb span = ürün adı
+            match = re.search(r'<span>([^<]+)</span>\s*</li>\s*</ul>', html)
+            if match:
+                title = match.group(1).strip()
+                print(f"Başlık: {title}")
+    except Exception as e:
+        print(f"Başlık hatası: {e}")
 
-        await context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['tr-TR', 'tr'] });
-            window.chrome = { runtime: {} };
-        """)
-
-        page = await context.new_page()
-
-        # ANA SAYFA
-        await page.goto(url, wait_until="domcontentloaded", timeout=90000)
-        await page.wait_for_timeout(4000)
-
-        # Çerez popup'ı kapat
-        for sel in ['button:has-text("Kabul Et")', 'button#onetrust-accept-btn-handler']:
-            try:
-                await page.wait_for_selector(sel, timeout=3000)
-                await page.click(sel)
-                print(f"Çerez kapatıldı: {sel}")
+    # YORUMLAR
+    comments = []
+    try:
+        page = 0
+        while len(comments) < 500:
+            r = requests.get(
+                f"{BASE}/review-read/product-reviews/detailed",
+                params={"channelId": 1, "contentId": product_id, "page": page, "pageSize": 20},
+                headers=HEADERS, timeout=30
+            )
+            print(f"Yorum API ({page}): {r.status_code}")
+            if r.status_code != 200:
                 break
-            except:
-                continue
+            data = r.json()
+            items = data.get("productReviews", data.get("reviews", data.get("content", [])))
+            if not items:
+                break
+            for item in items:
+                text = item.get("comment", "") or item.get("text", "")
+                user = item.get("userFullName", "") or item.get("userName", "Anonim")
+                stars = item.get("rate", 0) or item.get("rating", 0)
+                if text:
+                    comments.append({"user": str(user), "text": str(text), "stars": float(stars)})
+            total_pages = data.get("totalPages", data.get("pageCount", 1))
+            page += 1
+            if page >= total_pages:
+                break
+        print(f"Toplam yorum: {len(comments)}")
+    except Exception as e:
+        print(f"Yorum hatası: {e}")
 
-        await page.wait_for_timeout(2000)
+    # Q&A
+    qna_list = []
+    try:
+        page = 0
+        while len(qna_list) < 500:
+            r = requests.get(
+                f"{BASE}/merchant-questions/content/{product_id}/answered",
+                params={"channelId": 1, "excludeTag": "false", "fulfilmentType": "mp", "isMobile": "false", "page": page, "size": 20},
+                headers=HEADERS, timeout=30
+            )
+            print(f"Q&A API ({page}): {r.status_code}")
+            if r.status_code != 200:
+                break
+            data = r.json()
+            items = data.get("questions", data.get("content", data.get("items", [])))
+            if not items:
+                break
+            for item in items:
+                question = item.get("text", "") or item.get("question", "")
+                answers = item.get("answers", [])
+                answer = answers[0].get("text", "") if answers else ""
+                if question or answer:
+                    qna_list.append({"question": str(question), "answer": str(answer)})
+            total_pages = data.get("totalPages", data.get("pageCount", 1))
+            page += 1
+            if page >= total_pages:
+                break
+        print(f"Toplam Q&A: {len(qna_list)}")
+    except Exception as e:
+        print(f"Q&A hatası: {e}")
 
-        # BAŞLIK
-        title = ""
-        try:
-            await page.wait_for_selector('h1', timeout=20000)
-            title = await page.locator('h1').first.inner_text()
-            print(f"Başlık: {title}")
-        except Exception as e:
-            print(f"H1 bulunamadı: {e}")
-            title = await page.title()
-
-        # FİYAT
-        price = None
-        try:
-            el = page.locator('span.discounted')
-            if await el.count() > 0:
-                price = await el.first.inner_text()
-                print(f"Fiyat: {price}")
-            else:
-                print("Fiyat bulunamadı!")
-        except Exception as e:
-            print(f"Fiyat hatası: {e}")
-
-        # AÇIKLAMA
-        description = ""
-        try:
-            for sel in ['div.detail-attr-container', 'div#product-description', 'div.product-description']:
-                el = page.locator(sel)
-                if await el.count() > 0:
-                    description = await el.first.inner_text()
-                    print(f"Açıklama: {sel}")
-                    break
-        except Exception as e:
-            print(f"Açıklama hatası: {e}")
-
-        # GÖRSELLER
-        image_urls = []
-        try:
-            thumbs = page.locator('div._carouselThumbsContainer_05669af img._carouselThumbsImage_ddecc3e')
-            for i in range(await thumbs.count()):
-                src = await thumbs.nth(i).get_attribute('src')
-                if src and src not in image_urls:
-                    image_urls.append(src)
-            print(f"Görsel: {len(image_urls)}")
-        except Exception as e:
-            print(f"Görsel hatası: {e}")
-
-        # YORUMLAR SAYFASI
-        comments = []
-        try:
-            print(f"Yorumlar: {reviews_url}")
-            await page.goto(reviews_url, wait_until="domcontentloaded", timeout=90000)
-            await page.wait_for_timeout(3000)
-
-            last_count = 0
-            same_count_times = 0
-            for _ in range(300):
-                count = await page.locator('div.review').count()
-                print(f"Yorum: {count}")
-                if count == last_count:
-                    same_count_times += 1
-                else:
-                    same_count_times = 0
-                if same_count_times >= 8:
-                    break
-                last_count = count
-                await page.evaluate("window.scrollBy(0, window.innerHeight)")
-                await page.wait_for_timeout(700)
-
-            items = page.locator('div.review')
-            total = await items.count()
-            print(f"Toplam yorum: {total}")
-
-            for i in range(total):
-                try:
-                    item = items.nth(i)
-                    user, text, stars = "", "", 0
-                    u = item.locator('span.detail-item.name')
-                    if await u.count() > 0:
-                        user = await u.first.inner_text()
-                    t = item.locator('div.review-comment')
-                    if await t.count() > 0:
-                        text = await t.first.inner_text()
-                    full_stars = item.locator('svg.star-rating-full-star, i.star-rating-full-star, span.star-rating-full-star')
-                    stars = await full_stars.count()
-                    if text.strip():
-                        comments.append({'user': user.strip() or "Anonim", 'text': text.strip(), 'stars': stars})
-                except Exception as e:
-                    print(f"Yorum parse hatası: {e}")
-        except Exception as e:
-            print(f"Yorum hatası: {e}")
-
-        print(f"İşlenen yorum: {len(comments)}")
-
-        # Q&A SAYFASI
-        qna_list = []
-        try:
-            print(f"Q&A: {qna_url}")
-            await page.goto(qna_url, wait_until="domcontentloaded", timeout=90000)
-            await page.wait_for_timeout(3000)
-
-            last_count = 0
-            same_count_times = 0
-            for _ in range(300):
-                count = await page.locator('div.question-answer-card').count()
-                print(f"Q&A: {count}")
-                if count == last_count:
-                    same_count_times += 1
-                else:
-                    same_count_times = 0
-                if same_count_times >= 8:
-                    break
-                last_count = count
-                await page.evaluate("window.scrollBy(0, window.innerHeight)")
-                await page.wait_for_timeout(700)
-
-            items = page.locator('div.question-answer-card')
-            total = await items.count()
-            print(f"Toplam Q&A: {total}")
-
-            for i in range(total):
-                try:
-                    item = items.nth(i)
-                    question, answer = "", ""
-                    q = item.locator('div.question-answer-card-question-text')
-                    if await q.count() > 0:
-                        question = await q.first.inner_text()
-                    a = item.locator('div.seller-answer-content-text')
-                    if await a.count() > 0:
-                        answer = await a.first.inner_text()
-                    if question.strip() or answer.strip():
-                        qna_list.append({'question': question.strip(), 'answer': answer.strip()})
-                except Exception as e:
-                    print(f"Q&A parse hatası: {e}")
-        except Exception as e:
-            print(f"Q&A hatası: {e}")
-
-        print(f"İşlenen Q&A: {len(qna_list)}")
-        await browser.close()
-
-        return {
-            'title': title.strip(),
-            'price': price.strip() if price else None,
-            'description': description.strip(),
-            'images': image_urls,
-            'comments': comments,
-            'qna': qna_list
-        }
+    return {
+        "title": title,
+        "price": price,
+        "description": description,
+        "images": image_urls,
+        "comments": comments,
+        "qna": qna_list,
+    }
