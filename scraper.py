@@ -14,74 +14,79 @@ HEADERS = {
 }
 
 BASE = "https://apigw.trendyol.com/discovery-storefront-trproductgw-service/api"
+MARKETING = "https://apigw.trendyol.com/discovery-storefrontmarketing-marketinggw-service"
 
-def extract_ids(url: str):
-    product_id = re.search(r'-p-(\d+)', url)
-    seller_id = re.search(r'merchantId=(\d+)', url)
+def extract_ids(url):
+    product_id = re.search(r"-p-(\d+)", url)
+    seller_id = re.search(r"merchantId=(\d+)", url)
     if not product_id:
-        raise ValueError(f"Ürün ID bulunamadı: {url}")
+        raise ValueError(f"Urun ID bulunamadi: {url}")
     return product_id.group(1), (seller_id.group(1) if seller_id else None)
 
-async def scrape_product(url: str):
+async def scrape_product(url):
     product_id, seller_id = extract_ids(url)
-    print(f"Ürün ID: {product_id} | Satıcı ID: {seller_id}")
+    print(f"Urun ID: {product_id} | Satici ID: {seller_id}")
 
-    # ANA ÜRÜN — breadcrumb-seo'dan başlık al
+    slug_match = re.search(r"trendyol\.com/([^?]+)", url)
+    slug = slug_match.group(1) if slug_match else f"p-{product_id}"
+
     title = ""
     price = None
     description = ""
     image_urls = []
 
+    # BASLIK — breadcrumb-seo
     try:
-        slug_match = re.search(r'trendyol\.com/([^?]+)', url)
-        slug = slug_match.group(1) if slug_match else f"p-{product_id}"
-
-        # Breadcrumb'dan başlık
-        breadcrumb_url = (
-            f"https://apigw.trendyol.com/discovery-storefrontmarketing-marketinggw-service"
-            f"/breadcrumb-seo/{slug}"
-            f"?__renderMode=stream&platform=WEB&enableRedirect=true&pageType=product"
-            f"&channelId=1&storefrontId=1&language=tr&countryCode=TR&tld=.com&subPathStrategy=no-subpath"
+        r = requests.get(
+            f"{MARKETING}/breadcrumb-seo/{slug}",
+            params={
+                "__renderMode": "stream", "platform": "WEB", "enableRedirect": "true",
+                "pageType": "product", "channelId": "1", "storefrontId": "1",
+                "language": "tr", "countryCode": "TR", "tld": ".com", "subPathStrategy": "no-subpath"
+            },
+            headers=HEADERS, timeout=30
         )
-        r = requests.get(breadcrumb_url, headers=HEADERS, timeout=30)
         print(f"Breadcrumb status: {r.status_code}")
         if r.status_code == 200:
-            data = r.json()
-            html = data.get("main", "")
-            match = re.search(r'<span>([^<]+)</span>\s*</li>\s*</ul>', html)
-            if match:
-                title = match.group(1).strip()
-                print(f"Başlık: {title}")
+            html = r.json().get("main", "")
+            m = re.search(r"<span>([^<]+)</span>\s*</li>\s*</ul>", html)
+            if m:
+                title = m.group(1).strip()
+                print(f"Baslik: {title}")
+    except Exception as e:
+        print(f"Baslik hatasi: {e}")
 
-        # product-detail-seo'dan fiyat ve görseller
-        seo_url = (
-            f"https://apigw.trendyol.com/discovery-storefrontmarketing-marketinggw-service"
-            f"/product-detail-seo/{slug}"
-            f"?__renderMode=stream&platform=WEB&enableRedirect=true&skipBreadcrumbPartial=true"
-            f"&channelId=1&storefrontId=1&language=tr&countryCode=TR&tld=.com&subPathStrategy=no-subpath"
+    # FIYAT VE GORSELLER — product-detail-seo
+    try:
+        r = requests.get(
+            f"{MARKETING}/product-detail-seo/{slug}",
+            params={
+                "__renderMode": "stream", "platform": "WEB", "enableRedirect": "true",
+                "skipBreadcrumbPartial": "true", "channelId": "1", "storefrontId": "1",
+                "language": "tr", "countryCode": "TR", "tld": ".com", "subPathStrategy": "no-subpath"
+            },
+            headers=HEADERS, timeout=30
         )
-        r2 = requests.get(seo_url, headers=HEADERS, timeout=30)
-        print(f"SEO status: {r2.status_code}")
-        if r2.status_code == 200:
-            seo_data = r2.json()
+        print(f"SEO status: {r.status_code}")
+        if r.status_code == 200:
+            seo_data = r.json()
             seo_html = seo_data.get("main", "") or str(seo_data)
-            print(f"SEO response ilk 300: {seo_html[:300]}")
+            print(f"SEO ilk 300: {seo_html[:300]}")
 
-            # Fiyat - JSON-LD içinden çek
-            price_match = re.search(r'"price"\s*:\s*"?([\d.]+)"?', seo_html)
-            if price_match:
-                price = f"{price_match.group(1)} TL"
+            # Fiyat
+            pm = re.search(r'"price":\s*"?([\d.]+)"?', seo_html)
+            if pm:
+                price = f"{pm.group(1)} TL"
                 print(f"Fiyat: {price}")
 
-            # Görseller - JSON-LD veya og:image içinden
-            img_matches = re.findall(r'https://cdn\.dsmcdn\.com[^"'\s]+(?:jpg|jpeg|png|webp)', seo_html)
-            for img in img_matches:
-                if img not in image_urls:
+            # Gorseller
+            img_pattern = r"https://cdn\.dsmcdn\.com[^\"'\s]+"
+            for img in re.findall(img_pattern, seo_html):
+                if img not in image_urls and any(img.endswith(x) for x in ["jpg", "jpeg", "png", "webp"]):
                     image_urls.append(img)
-            print(f"Görsel: {len(image_urls)}")
-
+            print(f"Gorsel: {len(image_urls)}")
     except Exception as e:
-        print(f"Başlık/SEO hatası: {e}")
+        print(f"SEO hatasi: {e}")
 
     # YORUMLAR
     comments = []
@@ -113,7 +118,7 @@ async def scrape_product(url: str):
                 break
         print(f"Toplam yorum: {len(comments)}")
     except Exception as e:
-        print(f"Yorum hatası: {e}")
+        print(f"Yorum hatasi: {e}")
 
     # Q&A
     qna_list = []
@@ -122,7 +127,7 @@ async def scrape_product(url: str):
         while len(qna_list) < 500:
             r = requests.get(
                 f"{BASE}/merchant-questions/content/{product_id}/answered",
-                params={"channelId": 1, "isMobile": "false", "fulfilmentType[]": "MP", "page": page, "size": 20},
+                params={"channelId": 1, "isMobile": "false", "page": page, "size": 20},
                 headers=HEADERS, timeout=30
             )
             print(f"Q&A API ({page}): {r.status_code}")
@@ -145,7 +150,7 @@ async def scrape_product(url: str):
                 break
         print(f"Toplam Q&A: {len(qna_list)}")
     except Exception as e:
-        print(f"Q&A hatası: {e}")
+        print(f"Q&A hatasi: {e}")
 
     return {
         "title": title,
