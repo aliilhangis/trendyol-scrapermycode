@@ -33,16 +33,10 @@ async def scrape_product(url: str):
     image_urls = []
 
     try:
-        breadcrumb_url = (
-            f"https://apigw.trendyol.com/discovery-storefrontmarketing-marketinggw-service"
-            f"/breadcrumb-seo/furia/ft-30901bk-sss-manyetikli-elektro-gitar-p-{product_id}"
-            f"?__renderMode=stream&platform=WEB&enableRedirect=true&pageType=product"
-            f"&channelId=1&storefrontId=1&language=tr&countryCode=TR&tld=.com&subPathStrategy=no-subpath"
-        )
-        # Slug'ı URL'den çıkar
         slug_match = re.search(r'trendyol\.com/([^?]+)', url)
-        slug = slug_match.group(1) if slug_match else f"furia/ft-30901bk-sss-manyetikli-elektro-gitar-p-{product_id}"
-        
+        slug = slug_match.group(1) if slug_match else f"p-{product_id}"
+
+        # Breadcrumb'dan başlık
         breadcrumb_url = (
             f"https://apigw.trendyol.com/discovery-storefrontmarketing-marketinggw-service"
             f"/breadcrumb-seo/{slug}"
@@ -54,13 +48,40 @@ async def scrape_product(url: str):
         if r.status_code == 200:
             data = r.json()
             html = data.get("main", "")
-            # Son breadcrumb span = ürün adı
             match = re.search(r'<span>([^<]+)</span>\s*</li>\s*</ul>', html)
             if match:
                 title = match.group(1).strip()
                 print(f"Başlık: {title}")
+
+        # product-detail-seo'dan fiyat ve görseller
+        seo_url = (
+            f"https://apigw.trendyol.com/discovery-storefrontmarketing-marketinggw-service"
+            f"/product-detail-seo/{slug}"
+            f"?__renderMode=stream&platform=WEB&enableRedirect=true&skipBreadcrumbPartial=true"
+            f"&channelId=1&storefrontId=1&language=tr&countryCode=TR&tld=.com&subPathStrategy=no-subpath"
+        )
+        r2 = requests.get(seo_url, headers=HEADERS, timeout=30)
+        print(f"SEO status: {r2.status_code}")
+        if r2.status_code == 200:
+            seo_data = r2.json()
+            seo_html = seo_data.get("main", "") or str(seo_data)
+            print(f"SEO response ilk 300: {seo_html[:300]}")
+
+            # Fiyat - JSON-LD içinden çek
+            price_match = re.search(r'"price"\s*:\s*"?([\d.]+)"?', seo_html)
+            if price_match:
+                price = f"{price_match.group(1)} TL"
+                print(f"Fiyat: {price}")
+
+            # Görseller - JSON-LD veya og:image içinden
+            img_matches = re.findall(r'https://cdn\.dsmcdn\.com[^"'\s]+(?:jpg|jpeg|png|webp)', seo_html)
+            for img in img_matches:
+                if img not in image_urls:
+                    image_urls.append(img)
+            print(f"Görsel: {len(image_urls)}")
+
     except Exception as e:
-        print(f"Başlık hatası: {e}")
+        print(f"Başlık/SEO hatası: {e}")
 
     # YORUMLAR
     comments = []
@@ -101,7 +122,7 @@ async def scrape_product(url: str):
         while len(qna_list) < 500:
             r = requests.get(
                 f"{BASE}/merchant-questions/content/{product_id}/answered",
-                params={"channelId": 1, "excludeTag": "false", "fulfilmentType": "mp", "isMobile": "false", "page": page, "size": 20},
+                params={"channelId": 1, "isMobile": "false", "fulfilmentType[]": "MP", "page": page, "size": 20},
                 headers=HEADERS, timeout=30
             )
             print(f"Q&A API ({page}): {r.status_code}")
@@ -114,11 +135,8 @@ async def scrape_product(url: str):
                 break
             for item in items:
                 question = item.get("text", "")
-                answers = item.get("answers", [])
-                if isinstance(answers, list) and answers:
-                    answer = answers[0].get("text", "") if isinstance(answers[0], dict) else str(answers[0])
-                else:
-                    answer = str(answers) if answers else ""
+                answer_obj = item.get("answer", {})
+                answer = answer_obj.get("text", "") if isinstance(answer_obj, dict) else ""
                 if question or answer:
                     qna_list.append({"question": str(question), "answer": str(answer)})
             total_pages = questions_block.get("totalPages", 1)
